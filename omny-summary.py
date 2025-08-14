@@ -82,8 +82,9 @@ class FareCap:
             uncapped_fare = FARE
 
             days_since_first = (time.date() - first.date()).days
-            if days_since_first > self.days:
+            if days_since_first >= self.days:
                 first = time
+                # print(first.date())
                 trips = 1
             else:
                 trips += 1
@@ -98,9 +99,11 @@ class FareCap:
             total_uncapped_fare += uncapped_fare
             total_capped_fare += capped_fare
 
-            # print(
-            #     f"time={time}, days={days_since_first}, trips={trips}, fare={fare}, capped_fare={capped_fare}"
-            # )
+            if self.days == 7:
+                pass
+                # print(
+                #     f"time={time.strftime("%m/%d/%Y %I:%M %p")}, days={days_since_first}, trips={trips}, fare={fare}, capped_fare={capped_fare}, type={product_type}"
+                # )
 
         return FareCapResult(
             cap=self,
