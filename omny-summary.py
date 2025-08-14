@@ -59,7 +59,9 @@ def omny_summary(df: DataFrame, future_card: bool):
     print()
 
     if future_card:
-        future_fare_saved = Decimal("0.05") * total_fare + 5 * weeks_capped
+        future_fare_saved = (Decimal("0.05") * total_fare).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        ) + 5 * weeks_capped
         print(
             f"Future Card Savings: ${future_fare_saved}, {percent(future_fare_saved, total_fare)}%"
         )
