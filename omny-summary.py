@@ -7,7 +7,9 @@
 # ]
 # ///
 
-from decimal import ROUND_HALF_UP, Decimal
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -15,20 +17,111 @@ import typer
 from pandas import DataFrame
 
 
+FARE = Decimal("2.90")
+
+
 def percent(fraction: Decimal, total: Decimal) -> Decimal:
     return ((fraction / total) * 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+@dataclass
+class FareCapResult:
+    cap: "FareCap"
+    uncapped_fare: Decimal
+    capped_fare: Decimal
+    caps_hit: int
+
+    def fare_saved(self) -> Decimal:
+        return self.uncapped_fare - self.capped_fare
+
+    def fare_saved_percent(self) -> Decimal:
+        return percent(self.fare_saved(), self.uncapped_fare)
+
+    def __str__(self) -> str:
+        return f"${self.uncapped_fare} capped to ${self.capped_fare} (${self.fare_saved()} saved, {self.fare_saved_percent()}%) with {self.caps_hit} caps using a fare cap of ${self.cap.cap} per {self.cap.days} days"
+
+
+@dataclass(init=False)
+class FareCap:
+    days: int
+    cap: Decimal
+    trips: int
+    last_fare: Decimal
+
+    def __init__(self, days: int, cap: int):
+        self.days = days
+        self.cap = Decimal(cap)
+        self.trips = int((self.cap / FARE).quantize(Decimal(1), rounding=ROUND_UP))
+        trips_round_down = int(
+            (self.cap / FARE).quantize(Decimal(1), rounding=ROUND_DOWN)
+        )
+        if trips_round_down == self.trips:
+            self.last_fare = FARE
+        else:
+            self.last_fare = self.cap - FARE * trips_round_down
+
+    def calculate_savings(self, df: DataFrame):
+        first: datetime = datetime.min
+        trips = 0
+
+        total_uncapped_fare = Decimal(0)
+        total_capped_fare = Decimal(0)
+        caps_hit = 0
+
+        for i, trip in df.iloc[::-1].iterrows():
+            time: datetime = trip["Trip Time"]
+            product_type = trip["Product Type"]
+            fare = Decimal(str(trip["Fare Amount ($)"]).lstrip("$"))
+            non_transfer = (
+                product_type == "PAYGO" or product_type == "Free Trip – Weekly Fare Cap"
+            )
+
+            if not non_transfer:
+                continue
+
+            uncapped_fare = FARE
+
+            days_since_first = (time.date() - first.date()).days
+            if days_since_first > self.days:
+                first = time
+                trips = 1
+            else:
+                trips += 1
+            if trips < self.trips:
+                capped_fare = FARE
+            elif trips == self.trips:
+                capped_fare = self.last_fare
+                caps_hit += 1
+            else:
+                capped_fare = Decimal(0)
+
+            total_uncapped_fare += uncapped_fare
+            total_capped_fare += capped_fare
+
+            # print(
+            #     f"time={time}, days={days_since_first}, trips={trips}, fare={fare}, capped_fare={capped_fare}"
+            # )
+
+        return FareCapResult(
+            cap=self,
+            uncapped_fare=total_uncapped_fare,
+            capped_fare=total_capped_fare,
+            caps_hit=caps_hit,
+        )
+
+
 def omny_summary(df: DataFrame, future_card: bool):
+    df["Trip Time"] = pd.to_datetime(df["Trip Time"]).dt.tz_convert(
+        ZoneInfo("America/New_York")
+    )
+
+    weekly_cap = FareCap(days=7, cap=34)
+    monthly_cap = FareCap(days=30, cap=132)
+
     print(f"{len(df)} Trips")
     print()
 
-    trip_times = (
-        pd.to_datetime(df["Trip Time"])
-        .dt.tz_convert(ZoneInfo("America/New_York"))
-        .apply(lambda dt: dt.strftime("%m/%d/%Y %I:%M %p"))
-        .iloc
-    )
+    trip_times = df["Trip Time"].apply(lambda dt: dt.strftime("%m/%d/%Y %I:%M %p")).iloc
     print(f"first: {trip_times[-1]}")
     print(f" last: {trip_times[0]}")
     print()
@@ -49,9 +142,9 @@ def omny_summary(df: DataFrame, future_card: bool):
     total_fare = fare.sum()
     uncapped_fare = (
         product_type["PAYGO"] + product_type["Free Trip – Weekly Fare Cap"]
-    ) * Decimal("2.90")
+    ) * FARE
     fare_saved = uncapped_fare - total_fare
-    weeks_capped = fare_amount["$2.10"]
+    weeks_capped = fare_amount[f"${weekly_cap.last_fare}"]
     print(f"    Total Fare: ${total_fare}")
     print(f"  Weeks Capped: {weeks_capped}")
     print(f"Fare Cap Saved: ${fare_saved}, {percent(fare_saved, uncapped_fare)}%")
@@ -69,6 +162,9 @@ def omny_summary(df: DataFrame, future_card: bool):
             f"   Combined Savings: ${future_fare_saved + fare_saved}, {percent(future_fare_saved + fare_saved, uncapped_fare)}%"
         )
         print()
+
+    print(f"{weekly_cap.calculate_savings(df)}")
+    print(f"{monthly_cap.calculate_savings(df)}")
 
 
 def main(trip_history_path: Path, future_card: bool = False):
