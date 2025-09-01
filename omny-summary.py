@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 from pathlib import Path
+from zipfile import ZipFile, is_zipfile
 from zoneinfo import ZoneInfo
 import pandas as pd
 import typer
@@ -171,7 +172,12 @@ def omny_summary(df: DataFrame, future_card: bool):
 
 
 def main(trip_history_path: Path, future_card: bool = False):
-    df = pd.read_csv(trip_history_path)
+    if is_zipfile(trip_history_path):
+        with ZipFile(trip_history_path) as zip:
+            with zip.open("trip_history.csv") as f:
+                df = pd.read_csv(f)
+    else:
+        df = pd.read_csv(trip_history_path)
     omny_summary(df, future_card=future_card)
 
 
